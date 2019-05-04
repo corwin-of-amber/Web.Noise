@@ -79,9 +79,12 @@ function convertToMono( input ) {
 }
 
 function cancelAnalyserUpdates() {
-    window.cancelAnimationFrame( rafID );
+    //window.cancelAnimationFrame( rafID );
+    clearTimeout(rafID);
     rafID = null;
 }
+
+var x = 0;
 
 function updateAnalysers(time) {
     if (!analyserContext) {
@@ -117,9 +120,19 @@ function updateAnalysers(time) {
             analyserContext.fillStyle = "hsl( " + Math.round((i*360)/numBars) + ", 100%, 50%)";
             analyserContext.fillRect(i * SPACING, canvasHeight, BAR_WIDTH, -magnitude);
         }
+
+        // Draw frequency column
+        var cx = document.getElementById("freqmap").getContext('2d');
+        for (i = 0; i < 500; i++) { 
+            cx.fillStyle = "hsl(50, 100%, " + Math.floor(100 * freqByteData[i] / 256) + "%)";
+            cx.fillRect(x, i, 1, 1);
+        }
+        x++;
+        if (x > canvasWidth) x = 0;
     }
     
-    rafID = window.requestAnimationFrame( updateAnalysers );
+    //rafID = window.requestAnimationFrame( updateAnalysers );
+    rafID = setTimeout(updateAnalysers, 250);
 }
 
 function toggleMono() {
@@ -148,6 +161,7 @@ function gotStream(stream) {
 
     analyserNode = audioContext.createAnalyser();
     analyserNode.fftSize = 2048;
+    analyserNode.smoothingTimeConstant = 0.2;
     inputPoint.connect( analyserNode );
 
     //audioRecorder = new Recorder( inputPoint );
