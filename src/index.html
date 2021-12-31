@@ -7,6 +7,7 @@
 	<script src="./audiodisplay.js"></script>
 	<script src="./recorder.js"></script>
 	<script src="./main.js"></script>
+	<script src="./dropper.js"></script>
 	<style>
 	html { overflow: hidden; }
 	body { 
@@ -21,9 +22,22 @@
 	canvas { 
 		display: inline-block; 
 		background: #202020; 
+		/*width: 95%;
+		height: 45%;
+		box-shadow: 0px 0px 10px blue;*/
+	}
+	#analyser, #spectrogram-container {
+		display: inline-block; 
 		width: 95%;
 		height: 45%;
 		box-shadow: 0px 0px 10px blue;
+	}
+	#spectrogram-container {
+		overflow-x: auto;
+		overflow-y: hidden;
+	}
+	#spectrogram {
+		height: 100%;
 	}
 	#controls {
 		display: flex;
@@ -51,6 +65,11 @@
 		justify-content: space-around;
 		align-items: center;
 	}
+	#player {
+		position: absolute;
+		right: 0;
+		top: 0;
+	}
 	@media (orientation: landscape) {
 		body { flex-direction: row;}
 		#controls { flex-direction: column; height: 100%; width: 10%;}
@@ -62,11 +81,15 @@
 <body>
 	<div id="viz">
 		<canvas id="analyser" width="1024" height="500"></canvas>
-		<canvas id="freqmap" width="1024" height="500"></canvas>
+		<div id="spectrogram-container">
+			<canvas id="spectrogram" width="9600" height="750"></canvas>
+		</div>
 	</div>
 	<div id="controls">
 		<img id="record" src="../img/mic128.png" onclick="toggleRecording(this);">
 		<a id="save" href="#"><img src="../img/save.svg"></a>
 	</div>
+	<audio id="player" 
+		controls src="../audio/her-sweet-kiss.m4a"></audio>
 
 </body></html>

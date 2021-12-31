@@ -16,7 +16,8 @@
 window.AudioContext = window.AudioContext || window.webkitAudioContext;
 
 var audioContext;// = new AudioContext();
-var audioInput = null,
+var audioPlayer = null,
+    audioInput = null,
     realAudioInput = null,
     inputPoint = null,
     audioRecorder = null;
@@ -25,11 +26,10 @@ var analyserContext = null;
 var canvasWidth, canvasHeight;
 var recIndex = 0;
 
-/* TODO:
+var freqMapOut;
 
-- offer mono option
-- "Monitor input" switch
-*/
+const fs = require('fs');
+
 
 function saveAudio() {
     audioRecorder.exportWAV( doneEncoding );
@@ -53,18 +53,13 @@ function doneEncoding( blob ) {
 }
 
 function toggleRecording( e ) {
+    console.log(e);
     if (e.classList.contains("recording")) {
-        // stop recording
-        audioRecorder.stop();
         e.classList.remove("recording");
-        audioRecorder.getBuffers( gotBuffers );
+        if (freqMapOut) { freqMapOut.close(); freqMapOut = null; }
     } else {
-        // start recording
-        if (!audioRecorder)
-            return;
         e.classList.add("recording");
-        audioRecorder.clear();
-        audioRecorder.record();
+        freqMapOut = fs.createWriteStream('/tmp/web.noise.dat');
     }
 }
 
@@ -84,7 +79,51 @@ function cancelAnalyserUpdates() {
     rafID = null;
 }
 
-var x = 0;
+var freqMapData = [];
+
+const freqMapConfig = {
+    height: 750,
+    timeScale: 25,
+    freqScale: 4,
+    yCurve: v => v * v,
+    color: v => "hsl(50, 100%, " + Math.floor(100 * v) + "%)"
+};
+
+function drawBars(ctx, freqByteData, barGeometry /* {numBars, width, spacing} */) {
+    var {numBars, width, spacing} = barGeometry,
+        multiplier = freqByteData.length / numBars;
+
+    // Draw rectangle for each frequency bin.
+    for (var i = 0; i < numBars; ++i) {
+        var magnitude = 0;
+        var offset = Math.floor( i * multiplier );
+        // gotta sum/average the block, or we miss narrow-bandwidth spikes
+        for (var j = 0; j< multiplier; j++)
+            magnitude += freqByteData[offset + j];
+        magnitude = magnitude / multiplier;
+        //var magnitude2 = freqByteData[i * multiplier];
+        ctx.fillStyle = "hsl( " + Math.round((i*360)/numBars) + ", 100%, 50%)";
+        ctx.fillRect(i * spacing, canvasHeight, width, -magnitude);
+    }
+}
+
+function drawSpectrogramColumn(ctx, time, freqByteData) {
+    const cfg = freqMapConfig;
+
+    var x = Math.floor(time * cfg.timeScale);
+    for (i = 0; i < cfg.height; i++) { 
+        var v = freqByteData[i] / 256;
+        ctx.fillStyle = cfg.color(cfg.yCurve(v));// "hsl(50, 100%, " + Math.floor(100 * v * v) + "%)";
+        ctx.fillRect(x, cfg.height - i, 1, 1);
+    }
+}
+
+function clearSpectrogram() {
+    var canvas = document.getElementById('spectrogram'),
+        ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+}
+
 
 function updateAnalysers(time) {
     if (!analyserContext) {
@@ -97,42 +136,28 @@ function updateAnalysers(time) {
     // analyzer draw code here
     {
         var SPACING = 3;
-        var BAR_WIDTH = 1;
+        var BAR_WIDTH = 2;
         var numBars = Math.round(canvasWidth / SPACING);
         var freqByteData = new Uint8Array(analyserNode.frequencyBinCount);
 
         analyserNode.getByteFrequencyData(freqByteData); 
 
+        if (freqMapOut)
+            freqMapOut.write(freqByteData);
+
         analyserContext.clearRect(0, 0, canvasWidth, canvasHeight);
         analyserContext.fillStyle = '#F6D565';
         analyserContext.lineCap = 'round';
-        var multiplier = analyserNode.frequencyBinCount / numBars;
-
-        // Draw rectangle for each frequency bin.
-        for (var i = 0; i < numBars; ++i) {
-            var magnitude = 0;
-            var offset = Math.floor( i * multiplier );
-            // gotta sum/average the block, or we miss narrow-bandwidth spikes
-            for (var j = 0; j< multiplier; j++)
-                magnitude += freqByteData[offset + j];
-            magnitude = magnitude / multiplier;
-            var magnitude2 = freqByteData[i * multiplier];
-            analyserContext.fillStyle = "hsl( " + Math.round((i*360)/numBars) + ", 100%, 50%)";
-            analyserContext.fillRect(i * SPACING, canvasHeight, BAR_WIDTH, -magnitude);
-        }
+        drawBars(analyserContext, freqByteData,
+            {numBars, width: BAR_WIDTH, spacing: SPACING});
 
         // Draw frequency column
-        var cx = document.getElementById("freqmap").getContext('2d');
-        for (i = 0; i < 500; i++) { 
-            cx.fillStyle = "hsl(50, 100%, " + Math.floor(100 * freqByteData[i] / 256) + "%)";
-            cx.fillRect(x, i, 1, 1);
-        }
-        x++;
-        if (x > canvasWidth) x = 0;
+        var ctx = document.getElementById('spectrogram').getContext('2d');
+        drawSpectrogramColumn(ctx, audioPlayer.currentTime, freqByteData);
     }
     
-    //rafID = window.requestAnimationFrame( updateAnalysers );
-    rafID = setTimeout(updateAnalysers, 250);
+    rafID = window.requestAnimationFrame( updateAnalysers );
+    //rafID = setTimeout(updateAnalysers, 250);
 }
 
 function toggleMono() {
@@ -160,7 +185,7 @@ function gotStream(stream) {
 //    audioInput = convertToMono( input );
 
     analyserNode = audioContext.createAnalyser();
-    analyserNode.fftSize = 2048;
+    analyserNode.fftSize = 2048 * freqMapConfig.freqScale;
     analyserNode.smoothingTimeConstant = 0.2;
     inputPoint.connect( analyserNode );
 
@@ -170,10 +195,11 @@ function gotStream(stream) {
     zeroGain.gain.value = 0.0;
     inputPoint.connect( zeroGain );
     zeroGain.connect( audioContext.destination );
+    clearSpectrogram();
     updateAnalysers();
 }
 
-function initAudio() {
+async function initAudio(url) {
         if (!navigator.getUserMedia)
             navigator.getUserMedia = navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
         if (!navigator.cancelAnimationFrame)
@@ -198,8 +224,20 @@ function initAudio() {
             console.log(e);
         });
     */
+
+    /*
     navigator.mediaDevices.getUserMedia({audio: true})
     .then(gotStream);
+    */
+    audioPlayer = document.querySelector('audio');
+    if (url) {
+        audioPlayer.src = url;
+        await new Promise(resolve =>
+            audioPlayer.addEventListener('canplay', resolve, {once: true}));
+    }
+    var audioStream = audioPlayer.captureStream();
+    console.log(audioStream);
+    gotStream(audioStream);
 }
 
-window.addEventListener('load', initAudio );
+window.addEventListener('load', () => initAudio() );
